@@ -1,8 +1,8 @@
-./input/train/*
-./input/test/*
-./tensorboard/*
-./output/*
-./checkpoint/*
-./inference/*
-./*.csv
-
+/input/train/*
+/input/test/*
+/tensorboard/*
+/output/*
+/checkpoint/*
+/inference/*
+/*.csv
+/.idea

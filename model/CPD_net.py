@@ -324,7 +324,7 @@ class CPD(nn.Module):
         x2_2 = self.rfb4_2(x2_2)
         x2_3 = self.rfb5_2(x2_3)
         output2 = self.agg2(x2_3, x2_2, x2_1)
-        return self.upsample(output1), self.upsample(output2)
+        return self.upsample(output1.sigmoid()), self.upsample(output2.sigmoid())
 
 
 if __name__ == '__main__':
