@@ -1,0 +1,7 @@
+/input/train/*
+/input/test/*
+/tensorboard/*
+/output/*
+/checkpoint/*
+/inference/*
+/*.csv

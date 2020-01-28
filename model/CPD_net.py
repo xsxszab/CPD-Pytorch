@@ -175,7 +175,7 @@ class RFB(nn.Module):
             nn.Conv2d(out_channel, out_channel, kernel_size=(7, 1), padding=(3, 0)),
             nn.Conv2d(out_channel, out_channel, 3, padding=7, dilation=7)
         )
-        self.conv_cat = nn.Conv2d(4*out_channel, out_channel, 3, padding=1)
+        self.conv_cat = nn.Conv2d(4 * out_channel, out_channel, 3, padding=1)
         self.conv_res = nn.Conv2d(in_channel, out_channel, 1)
 
         for m in self.modules():
@@ -196,28 +196,139 @@ class RFB(nn.Module):
         return x
 
 
+def make_guassian_window(n=16, sigma=3):
+    """Generate a gaussian filter with shape n*n, mu=0 and input sigma.
+
+        :param n: filter size.
+        :param sigma: sigma of 2D gaussian function.
+    """
+    nn = int((n - 1) / 2)
+    a = np.asarray([[x**2 + y**2 for x in range(-nn, nn + 1)]
+                    for y in range(-nn, nn + 1)])
+    # np.asarray可以将输入转化为np.array, 这里输入为一个列表推导式
+    return np.exp(-a / (2 * sigma**2))
+
+
+def min_max_norm(feature):
+    """Apply min_max normalization.
+    """
+    max_ = feature.max(3)[0].max(2)[0].unsqueeze(
+        2).unsqueeze(3).expand_as(feature)
+    min_ = feature.min(3)[0].min(2)[0].unsqueeze(
+        2).unsqueeze(3).expand_as(feature)
+    feature = feature - min_
+    return feature.div(max_ - min_ + 1e-8)
+
+
 class HAM(nn.Module):
+    """Holistic attention module.
+    """
 
     def __init__(self):
         super().__init__()
+        gaussian_kernel = np.float32(make_guassian_window(31, 4))
+        gaussian_kernel = gaussian_kernel[np.newaxis, np.newaxis, ...]
+        self.gaussian_kernel = torch.nn.Parameter(
+            torch.from_numpy(gaussian_kernel))
 
-    def forward(self, x):
+    def forward(self, attention, x):
+        soft_attention = nn.functional.conv2d(
+            attention, self.gaussian_kernel, padding=15)
+        soft_attention = min_max_norm(soft_attention)
+        x = torch.mul(x, soft_attention.max(attention))
+        return x
+
+
+class Aggregation(nn.Module):
+    """Feature aggration module.
+    """
+    def __init__(self, channel):
+        super().__init__()
+        self.relu = nn.ReLU(True)
+
+        self.upsample = nn.Upsample(
+            scale_factor=2,
+            mode='bilinear',
+            align_corners=True)
+        self.conv_upsample1 = nn.Conv2d(channel, channel, 3, padding=1)
+        self.conv_upsample2 = nn.Conv2d(channel, channel, 3, padding=1)
+        self.conv_upsample3 = nn.Conv2d(channel, channel, 3, padding=1)
+        self.conv_upsample4 = nn.Conv2d(channel, channel, 3, padding=1)
+        self.conv_upsample5 = nn.Conv2d(2 * channel, 2 * channel, 3, padding=1)
+
+        self.conv_concat2 = nn.Conv2d(2 * channel, 2 * channel, 3, padding=1)
+        self.conv_concat3 = nn.Conv2d(3 * channel, 3 * channel, 3, padding=1)
+        self.conv4 = nn.Conv2d(3 * channel, 3 * channel, 3, padding=1)
+        self.conv5 = nn.Conv2d(3 * channel, 1, 1)
+
+        for m in self.modules():
+            if isinstance(m, nn.Conv2d):
+                m.weight.data.normal_(std=0.01)
+                m.bias.data.fill_(0)
+
+    def forward(self, x1, x2, x3):
+        # x1: 1/16 x2: 1/8 x3: 1/4
+        x1_1 = x1
+        x2_1 = self.conv_upsample1(self.upsample(x1)) * x2
+        x3_1 = self.conv_upsample2(self.upsample(self.upsample(x1))) \
+            * self.conv_upsample3(self.upsample(x2)) * x3
+
+        x2_2 = torch.cat((x2_1, self.conv_upsample4(self.upsample(x1_1))), 1)
+        x2_2 = self.conv_concat2(x2_2)
+
+        x3_2 = torch.cat((x3_1, self.conv_upsample5(self.upsample(x2_2))), 1)
+        x3_2 = self.conv_concat3(x3_2)
+
+        x = self.conv4(x3_2)
+        x = self.conv5(x)
+
         return x
 
 
 class CPD(nn.Module):
+    """Main structure of CPD net.
+    """
 
     def __init__(self):
         super().__init__()
         self.branch_vgg = Branch_vgg16()
+        self.rfb3_1 = RFB(256, 32)
+        self.rfb4_1 = RFB(512, 32)
+        self.rfb5_1 = RFB(512, 32)
+        self.agg1 = Aggregation(32)
+
+        self.rfb3_2 = RFB(256, 32)
+        self.rfb4_2 = RFB(512, 32)
+        self.rfb5_2 = RFB(512, 32)
+        self.agg2 = Aggregation(32)
+        self.ham = HAM()
+        self.upsample = nn.Upsample(scale_factor=4, mode='bilinear', align_corners=True)
 
     def forward(self, x):
-        x1, x2 = self.branch_vgg(x)
-        return x1
+        x = self.branch_vgg.conv1(x)
+        x = self.branch_vgg.conv2(x)
+        x = self.branch_vgg.conv3(x)
+
+        x1_1 = x
+        x1_2 = self.branch_vgg.conv4_1(x)
+        x1_3 = self.branch_vgg.conv5_1(x1_2)
+        x1_1 = self.rfb3_1(x1_1)
+        x1_2 = self.rfb4_1(x1_2)
+        x1_3 = self.rfb5_1(x1_3)
+        output1 = self.agg1(x1_3, x1_2, x1_1)
+
+        x2_1 = self.ham(output1.sigmoid(), x)
+        x2_2 = self.branch_vgg.conv4_1(x2_1)
+        x2_3 = self.branch_vgg.conv5_2(x2_2)
+        x2_1 = self.rfb3_2(x2_1)
+        x2_2 = self.rfb4_2(x2_2)
+        x2_3 = self.rfb5_2(x2_3)
+        output2 = self.agg2(x2_3, x2_2, x2_1)
+        return self.upsample(output1), self.upsample(output2)
 
 
 if __name__ == '__main__':
-    test = Branch_vgg16()
+    test = CPD()
     img = PIL.Image.open('test.jpg', 'r')
     img = img.resize((224, 224))
     img = np.array(img)
