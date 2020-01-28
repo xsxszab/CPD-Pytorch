@@ -13,7 +13,7 @@ import pandas as pd
 from PIL import Image
 import matplotlib.pyplot as plt
 
-from model.CPD_net import CPD  # DHS network
+from model.CPD_net import CPD  # CPD network
 from dataset import TrainData
 from utils.tools import get_mae  # get MAE
 from utils.tools import get_f_measure  # get adaptive f measure
