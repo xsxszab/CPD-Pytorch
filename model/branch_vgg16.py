@@ -6,15 +6,6 @@ import torchvision
 import PIL
 
 
-class HAM(nn.Module):
-
-    def __init__(self):
-        super().__init__()
-
-    def forward(self, x):
-        return x
-
-
 class Branch_vgg16(nn.Module):
 
     def __init__(self):

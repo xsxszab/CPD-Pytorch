@@ -8,3 +8,10 @@ import PIL
 from branch_vgg16 import Branch_vgg16
 
 
+class HAM(nn.Module):
+
+    def __init__(self):
+        super().__init__()
+
+    def forward(self, x):
+        return x
